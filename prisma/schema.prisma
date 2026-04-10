@@ -117,6 +117,7 @@ model User {
   importBatches       ImportBatch[]
   categories          Category[]
   auditLogs           AuditLog[]
+  plaidItems          PlaidItem[]
 }
 
 /// Link between a user and a bank — represents an Open Banking / Flinks / Plaid consent grant
@@ -137,6 +138,7 @@ model UserBankConnection {
   deletedAt DateTime?
 
   bankAccounts BankAccount[]
+  plaidItem    PlaidItem?
 }
 
 /// A single bank account owned by a user; identified by the Canadian CPA routing triple
@@ -342,4 +344,41 @@ model AuditLog {
 
   @@index([entityType, entityId]) // look up all events for a specific record
   @@index([userId])
+}
+
+// ── PLAID INTEGRATION ────────────────────────────────────────
+
+enum PlaidItemStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  ERROR
+}
+
+/// Stores a single Plaid Item (one bank connection) with its encrypted access token
+model PlaidItem {
+  id                   String              @id @default(uuid())
+  userId               String
+  user                 User                @relation(fields: [userId], references: [id])
+  userBankConnectionId String?             @unique
+  userBankConnection   UserBankConnection? @relation(fields: [userBankConnectionId], references: [id])
+
+  plaidItemId          String          @unique  // Plaid item_id
+  accessTokenEncrypted String                   // AES-256-GCM ciphertext (base64)
+  accessTokenIv        String                   // base64 12-byte IV
+  accessTokenTag       String                   // base64 16-byte GCM auth tag
+
+  institutionId        String?                  // Plaid institution_id e.g. "ins_1"
+  institutionName      String?
+  consentExpiresAt     DateTime?
+  status               PlaidItemStatus @default(ACTIVE)
+  lastSyncedAt         DateTime?
+  errorCode            String?                  // Plaid error code e.g. ITEM_LOGIN_REQUIRED
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([userId])
+  @@index([plaidItemId])
 }

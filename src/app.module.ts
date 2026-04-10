@@ -6,6 +6,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { ProfileModule } from './profile/profile.module';
+import { PlaidModule } from './plaid/plaid.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { ProfileModule } from './profile/profile.module';
     AuthModule,
     UserModule,
     ProfileModule,
+    PlaidModule,
   ],
   controllers: [AppController],
   providers: [AppService],
