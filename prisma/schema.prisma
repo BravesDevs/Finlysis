@@ -1,0 +1,345 @@
+// ============================================================
+// prisma/schema.prisma — Finlysis
+// Provider: MySQL
+// PKs: String UUID via @default(uuid())
+// Soft delete: deletedAt DateTime? on every entity
+// Timestamps: createdAt @default(now()), updatedAt @updatedAt
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+// ── MASTER / LOOKUP TABLES ───────────────────────────────────
+// Seeded once; referenced by String code. Not Prisma enums so
+// new values can be added via seed inserts without migrations.
+
+/// Canadian chartered bank — used to identify an account's home institution
+model Bank {
+  id                String  @id @default(uuid())
+  name              String
+  legalName         String
+  institutionNumber String  @db.Char(3)  // 3-digit CA institution number e.g. "001"
+  swiftCode         String?
+  logoUrl           String?
+  isActive          Boolean @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  userBankConnections UserBankConnection[]
+}
+
+/// Account product type — CHEQUING | SAVINGS | TFSA | RRSP | FHSA | LOC | CREDIT_CARD
+model AccountType {
+  id          String  @id @default(uuid())
+  code        String  @unique
+  label       String
+  description String? @db.Text
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  bankAccounts BankAccount[]
+}
+
+/// Direction/nature of a financial movement — DEBIT | CREDIT | TRANSFER | FEE | INTEREST | REVERSAL
+model TransactionType {
+  id          String  @id @default(uuid())
+  code        String  @unique
+  label       String
+  description String? @db.Text
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  transactions Transaction[]
+}
+
+/// ISO 4217 currency — CAD, USD, EUR, etc.
+model Currency {
+  id     String @id @default(uuid())
+  code   String @unique @db.Char(3)   // ISO 4217 e.g. "CAD"
+  symbol String @db.VarChar(5)        // e.g. "$", "US$"
+  name   String
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  users        User[]
+  bankAccounts BankAccount[]
+  transactions Transaction[]
+}
+
+/// Origin of an import batch — CSV | OFX | PDF | API
+model ImportSource {
+  id    String @id @default(uuid())
+  code  String @unique
+  label String
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  importBatches ImportBatch[]
+}
+
+// ── CORE ENTITIES ────────────────────────────────────────────
+
+/// Platform user — customers, analysts, and admins
+model User {
+  id                  String    @id @default(uuid())
+  email               String    @unique
+  passwordHash        String
+  firstName           String
+  lastName            String
+  phone               String?
+  dateOfBirth         DateTime? @db.Date
+  preferredCurrencyId String?
+  preferredCurrency   Currency? @relation(fields: [preferredCurrencyId], references: [id])
+  isEmailVerified     Boolean   @default(false)
+  lastLoginAt         DateTime?
+  role                String    @default("USER") // USER | ADMIN | ANALYST
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  userBankConnections UserBankConnection[]
+  importBatches       ImportBatch[]
+  categories          Category[]
+  auditLogs           AuditLog[]
+}
+
+/// Link between a user and a bank — represents an Open Banking / Flinks / Plaid consent grant
+model UserBankConnection {
+  id                   String    @id @default(uuid())
+  userId               String
+  user                 User      @relation(fields: [userId], references: [id])
+  bankId               String
+  bank                 Bank      @relation(fields: [bankId], references: [id])
+  nickname             String?
+  isActive             Boolean   @default(true)
+  consentGrantedAt     DateTime?
+  consentExpiresAt     DateTime?
+  externalConnectionId String?   @unique // Opaque ID from Flinks / Plaid CA
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  bankAccounts BankAccount[]
+}
+
+/// A single bank account owned by a user; identified by the Canadian CPA routing triple
+model BankAccount {
+  id                   String             @id @default(uuid())
+  userBankConnectionId String
+  userBankConnection   UserBankConnection @relation(fields: [userBankConnectionId], references: [id])
+  accountTypeId        String
+  accountType          AccountType        @relation(fields: [accountTypeId], references: [id])
+  currencyId           String
+  currency             Currency           @relation(fields: [currencyId], references: [id])
+
+  transitNumber       String  @db.Char(5) // CPA 5-digit transit number
+  institutionNumber   String  @db.Char(3) // CPA 3-digit institution number
+  accountNumber       String  @db.Char(7) // CPA 7-digit account number (CPA standard 006)
+  accountNumberMasked String?             // e.g. "****1234" for UI display
+  nickname            String?
+
+  currentBalance   Decimal  @db.Decimal(15, 2)
+  availableBalance Decimal? @db.Decimal(15, 2)
+  balanceAsOf      DateTime
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // CPA natural key — prevents duplicate accounts and enables upsert-safe syncing
+  @@unique([transitNumber, institutionNumber, accountNumber])
+
+  transactions       Transaction[]
+  importBatches      ImportBatch[]
+  analyticsSnapshots AnalyticsSnapshot[]
+}
+
+/// Individual financial transaction on a bank account
+model Transaction {
+  id                String          @id @default(uuid())
+  bankAccountId     String
+  bankAccount       BankAccount     @relation(fields: [bankAccountId], references: [id])
+  transactionTypeId String
+  transactionType   TransactionType @relation(fields: [transactionTypeId], references: [id])
+  currencyId        String
+  currency          Currency        @relation(fields: [currencyId], references: [id])
+
+  amount      Decimal  @db.Decimal(15, 2)
+  fxRateToCAD Decimal? @db.Decimal(10, 6) // 6dp precision for FX rates
+
+  postedDate DateTime  @db.Date // calendar date only — no time component
+  valueDate  DateTime? @db.Date
+
+  description      String  @db.Text // free-form; can exceed VARCHAR(191)
+  merchantName     String?
+  merchantCategory String? @db.Char(4) // ISO 18245 MCC code
+  referenceNumber  String?
+
+  balance Decimal? @db.Decimal(15, 2) // running balance snapshot at time of tx
+
+  isRecurring Boolean @default(false)
+  isDuplicate Boolean @default(false)
+
+  importBatchId String?
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+  categoryId    String?
+  category      Category?    @relation(fields: [categoryId], references: [id])
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tags TransactionTag[]
+
+  @@index([bankAccountId])
+  @@index([postedDate])
+  @@index([merchantName])
+}
+
+// ── IMPORT & AUDIT TABLES ────────────────────────────────────
+
+/// Represents a single file import job — tracks parse progress and errors
+model ImportBatch {
+  id             String       @id @default(uuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id])
+  bankAccountId  String
+  bankAccount    BankAccount  @relation(fields: [bankAccountId], references: [id])
+  importSourceId String
+  importSource   ImportSource @relation(fields: [importSourceId], references: [id])
+
+  fileName      String
+  fileSizeBytes Int
+
+  // S3 storage destination — populated after the file is uploaded to Railway S3
+  storageBucket String? // bucket name e.g. "finlysis-imports"
+  storageKey    String? // object path within bucket e.g. "imports/userId/2024-01-15_td_chequing.csv"
+  storageUrl    String? // full URL for direct download / presigned access
+  storageRegion String? // S3 region e.g. "us-east-1"
+
+  rowCount      Int    @default(0)
+  successCount  Int    @default(0)
+  errorCount    Int    @default(0)
+
+  status      String   @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
+  startedAt   DateTime?
+  completedAt DateTime?
+  // Structured per-row error array e.g. [{"row":42,"error":"Invalid date","raw":"..."}]
+  errorLog    Json?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  transactions Transaction[]
+
+  @@index([userId, status]) // most common query: "pending imports for user X"
+}
+
+/// Hierarchical spending category — system-global (userId null) or user-defined
+model Category {
+  id String @id @default(uuid())
+
+  // Explicit relation name required by Prisma for self-referential models
+  parentId String?
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryHierarchy")
+
+  name     String
+  icon     String?
+  color    String?  @db.Char(7) // hex color e.g. "#FF5733"
+  isSystem Boolean  @default(false) // true = seeded global; false = user-created
+
+  // userId null = global/system category; userId set = personal category
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  transactions Transaction[]
+}
+
+/// Free-text label attached to a transaction — supports multi-tag via join rows
+model TransactionTag {
+  id            String      @id @default(uuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  tag           String      // user-defined e.g. "tax-deductible", "vacation"
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([transactionId, tag]) // prevent duplicate tags on the same transaction
+}
+
+/// Pre-aggregated financial summary for an account over a time window
+model AnalyticsSnapshot {
+  id            String      @id @default(uuid())
+  bankAccountId String
+  bankAccount   BankAccount @relation(fields: [bankAccountId], references: [id])
+
+  snapshotDate   DateTime @db.Date           // anchor date for the period
+  totalCredits   Decimal  @db.Decimal(15, 2)
+  totalDebits    Decimal  @db.Decimal(15, 2)
+  netFlow        Decimal  @db.Decimal(15, 2) // totalCredits - totalDebits
+  openingBalance Decimal  @db.Decimal(15, 2)
+  closingBalance Decimal  @db.Decimal(15, 2)
+
+  period String // DAILY | WEEKLY | MONTHLY | YEARLY
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // Enables idempotent upsert: one snapshot per account per date per period
+  @@unique([bankAccountId, snapshotDate, period])
+}
+
+/// Immutable audit trail for all data mutations across the platform
+model AuditLog {
+  id String @id @default(uuid())
+
+  // Nullable: system jobs (cron, import pipeline) may have no acting user
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  action     String // CREATE | UPDATE | DELETE | LOGIN | IMPORT
+  entityType String // e.g. "Transaction", "BankAccount"
+  // Plain String, not a FK — audit rows must outlive soft/hard-deleted entities
+  entityId   String
+
+  oldValue Json? // previous state; null on creates
+  newValue Json? // next state; null on deletes
+
+  ipAddress String?
+  userAgent String? @db.Text
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([entityType, entityId]) // look up all events for a specific record
+  @@index([userId])
+}
