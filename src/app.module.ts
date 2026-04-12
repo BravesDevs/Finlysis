@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { ProfileModule } from './profile/profile.module';
 import { PlaidModule } from './plaid/plaid.module';
+import { ImportModule } from './import/import.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { PlaidModule } from './plaid/plaid.module';
     UserModule,
     ProfileModule,
     PlaidModule,
+    ImportModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -201,6 +201,8 @@ model Transaction {
   isRecurring Boolean @default(false)
   isDuplicate Boolean @default(false)
 
+  fingerprint String? @unique // SHA-256 hex of bankAccountId|date|amount|description
+
   importBatchId String?
   importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
   categoryId    String?
@@ -215,6 +217,7 @@ model Transaction {
   @@index([bankAccountId])
   @@index([postedDate])
   @@index([merchantName])
+  @@index([fingerprint])
 }
 
 // ── IMPORT & AUDIT TABLES ────────────────────────────────────
@@ -240,6 +243,7 @@ model ImportBatch {
 
   rowCount      Int    @default(0)
   successCount  Int    @default(0)
+  skippedCount  Int    @default(0)
   errorCount    Int    @default(0)
 
   status      String   @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED
