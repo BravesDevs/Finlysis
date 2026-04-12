@@ -236,10 +236,11 @@ model ImportBatch {
   fileSizeBytes Int
 
   // S3 storage destination — populated after the file is uploaded to Railway S3
-  storageBucket String? // bucket name e.g. "finlysis-imports"
-  storageKey    String? // object path within bucket e.g. "imports/userId/2024-01-15_td_chequing.csv"
-  storageUrl    String? // full URL for direct download / presigned access
-  storageRegion String? // S3 region e.g. "us-east-1"
+  storageBucket   String? // bucket name — mirrors BUCKET_NAME
+  storageKey      String? // object path within bucket e.g. "imports/userId/2024-01-15_td_chequing.csv"
+  storageUrl      String? // full URL for direct download / presigned access
+  storageRegion   String? // S3 region — mirrors BUCKET_REGION e.g. "us-east-1"
+  storageEndpoint String? // custom S3-compatible endpoint — mirrors BUCKET_ENDPOINT (required for Railway / non-AWS providers)
 
   rowCount      Int    @default(0)
   successCount  Int    @default(0)
