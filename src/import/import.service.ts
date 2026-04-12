@@ -168,25 +168,55 @@ function parseRow(
 
 // ─── CSV streaming parser ─────────────────────────────────────────────────────
 
-async function parseCsvBuffer(buffer: Buffer): Promise<Record<string, string>[]> {
+/** Parse CSV into raw string arrays (no header interpretation). */
+async function parseCsvRaw(buffer: Buffer): Promise<string[][]> {
+  return new Promise((resolve, reject) => {
+    const rows: string[][] = [];
+    const stream = Readable.from(buffer);
+    stream
+      .pipe(parse({ columns: false, skip_empty_lines: true, trim: true, bom: true, relax_column_count: true }))
+      .on('data', (row: string[]) => rows.push(row))
+      .on('error', reject)
+      .on('end', () => resolve(rows));
+  });
+}
+
+/** Parse CSV with the first row used as column headers. */
+async function parseCsvWithHeaders(buffer: Buffer): Promise<Record<string, string>[]> {
   return new Promise((resolve, reject) => {
     const rows: Record<string, string>[] = [];
     const stream = Readable.from(buffer);
-
     stream
-      .pipe(
-        parse({
-          columns: true,
-          skip_empty_lines: true,
-          trim: true,
-          bom: true,
-          relax_column_count: true,
-        }),
-      )
+      .pipe(parse({ columns: true, skip_empty_lines: true, trim: true, bom: true, relax_column_count: true }))
       .on('data', (row: Record<string, string>) => rows.push(row))
       .on('error', reject)
       .on('end', () => resolve(rows));
   });
+}
+
+/**
+ * Auto-detects whether the CSV has a header row by checking if the first cell
+ * parses as a date. If it does, the file is headerless (e.g. CIBC exports) and
+ * columns are mapped positionally as: date, description, debit, credit.
+ */
+async function parseCsvBuffer(buffer: Buffer): Promise<Record<string, string>[]> {
+  const raw = await parseCsvRaw(buffer);
+  if (raw.length === 0) return [];
+
+  const firstCell = raw[0][0]?.trim() ?? '';
+  const isHeaderless = parseDate(firstCell) !== null;
+
+  if (isHeaderless) {
+    // Headerless format (e.g. CIBC): date, description, debit, credit
+    return raw.map(row => ({
+      date:        row[0]?.trim() ?? '',
+      description: row[1]?.trim() ?? '',
+      debit:       row[2]?.trim() ?? '',
+      credit:      row[3]?.trim() ?? '',
+    }));
+  }
+
+  return parseCsvWithHeaders(buffer);
 }
 
 // ─── Service ─────────────────────────────────────────────────────────────────
