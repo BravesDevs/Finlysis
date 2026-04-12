@@ -242,6 +242,12 @@ model ImportBatch {
   storageRegion   String? // S3 region — mirrors BUCKET_REGION e.g. "us-east-1"
   storageEndpoint String? // custom S3-compatible endpoint — mirrors BUCKET_ENDPOINT (required for Railway / non-AWS providers)
 
+  // File upload tracking — written by StorageService after the import completes
+  fileKey          String? // S3 object key  e.g. imports/userId/batchId/filename.csv
+  fileUrl          String? // full S3 URL returned after upload
+  fileUploadStatus String? // PENDING | UPLOADED | FAILED
+  fileUploadError  String? // error message if S3 upload fails
+
   rowCount      Int    @default(0)
   successCount  Int    @default(0)
   skippedCount  Int    @default(0)

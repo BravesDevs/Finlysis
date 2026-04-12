@@ -1,12 +1,14 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { parse } from 'csv-parse';
 import { Readable } from 'stream';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { ImportTransactionsDto } from './dto';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -223,7 +225,12 @@ async function parseCsvBuffer(buffer: Buffer): Promise<Record<string, string>[]>
 
 @Injectable()
 export class ImportService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(ImportService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storageService: StorageService,
+  ) {}
 
   // ── Upload entry point ───────────────────────────────────────────────────
 
@@ -266,18 +273,24 @@ export class ImportService {
     });
 
     // Process asynchronously — do not await
-    this.processImport(batch.id, userId, dto.bankAccountId, account.currencyId, file.buffer).catch(
-      async (err) => {
-        await this.prisma.importBatch.update({
-          where: { id: batch.id },
-          data: {
-            status: 'FAILED',
-            completedAt: new Date(),
-            errorLog: [{ row: 0, reason: String(err?.message ?? err) }],
-          },
-        });
-      },
-    );
+    this.processImport(
+      batch.id,
+      userId,
+      dto.bankAccountId,
+      account.currencyId,
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+    ).catch(async (err) => {
+      await this.prisma.importBatch.update({
+        where: { id: batch.id },
+        data: {
+          status: 'FAILED',
+          completedAt: new Date(),
+          errorLog: [{ row: 0, reason: String(err?.message ?? err) }],
+        },
+      });
+    });
 
     return { importBatchId: batch.id };
   }
@@ -290,6 +303,8 @@ export class ImportService {
     bankAccountId: string,
     currencyId: string,
     buffer: Buffer,
+    originalName: string,
+    mimeType: string,
   ): Promise<void> {
     const errors: RowError[] = [];
     const skipped: Array<{ row: number; reason: string }> = [];
@@ -419,6 +434,38 @@ export class ImportService {
         completedAt: new Date(),
       },
     });
+
+    // ── Fire-and-forget S3 upload ──────────────────────────────────────────
+    // Must NOT block the response. The client polls fileUploadStatus via
+    // GET /import/batches/:id to check when the file is available.
+
+    await this.prisma.importBatch.update({
+      where: { id: batchId },
+      data:  { fileUploadStatus: 'PENDING' },
+    });
+
+    this.storageService
+      .uploadFile({ buffer, originalName, mimeType, userId, batchId })
+      .then(async ({ fileKey, fileUrl }) => {
+        await this.prisma.importBatch.update({
+          where: { id: batchId },
+          data:  { fileKey, fileUrl, fileUploadStatus: 'UPLOADED' },
+        });
+      })
+      .catch(async (err) => {
+        // Upload failure must NEVER affect transaction data already saved
+        await this.prisma.importBatch.update({
+          where: { id: batchId },
+          data:  {
+            fileUploadStatus: 'FAILED',
+            fileUploadError:  err?.message ?? 'Unknown S3 error',
+          },
+        });
+        this.logger.error('S3 upload failed', {
+          batchId,
+          error: err?.message,
+        });
+      });
   }
 
   // ── List batches ─────────────────────────────────────────────────────────
