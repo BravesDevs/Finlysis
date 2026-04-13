@@ -8,6 +8,9 @@ import { UserModule } from './user/user.module';
 import { ProfileModule } from './profile/profile.module';
 import { PlaidModule } from './plaid/plaid.module';
 import { ImportModule } from './import/import.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { TransactionsModule } from './transactions/transactions.module';
+import { AccountsModule } from './accounts/accounts.module';
 
 @Module({
   imports: [
@@ -18,6 +21,9 @@ import { ImportModule } from './import/import.module';
     ProfileModule,
     PlaidModule,
     ImportModule,
+    DashboardModule,
+    TransactionsModule,
+    AccountsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -218,6 +218,7 @@ model Transaction {
   @@index([postedDate])
   @@index([merchantName])
   @@index([fingerprint])
+  @@index([bankAccountId, postedDate])
 }
 
 // ── IMPORT & AUDIT TABLES ────────────────────────────────────
