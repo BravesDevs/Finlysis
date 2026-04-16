@@ -1,0 +1,16 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    image: finlysis:latest
+    container_name: finlysis-app
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+    restart: unless-stopped
